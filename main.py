@@ -5,6 +5,29 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 import pandas as pd
 import joblib
 
+Moscow = pd.read_csv('flats_Moscow.csv')
+Ekat = pd.read_csv('flats_Ekat.csv')
+Kazan = pd.read_csv('flats_Kazan.csv')
+Novosib = pd.read_csv('flats_Novosib.csv')
+SaintP = pd.read_csv('flats_SaintP.csv')
+
+async def filter(city_df,data, price, message):
+    links = city_df[(city_df['price_per_month'] >= price - 10000) & (city_df['price_per_month'] <= price + 10000) &
+                   (city_df['rooms_count'] == int(data['rooms_count'])) & (city_df['city'] == data['city']) & (
+                               city_df['total_meters'] >= int(data['total_meters']) - 10) &
+                   (city_df['total_meters'] <= int(data['total_meters']) + 10) & (
+                               city_df['underground'] == data['underground'])]['link']
+
+    if len(links) == 0:
+        await bot.send_message(message.from_user.id, f'По твоему запросу ничего не найдено, уточни запрос!')
+    else:
+        await bot.send_message(message.from_user.id, f'По твоему запросу могу предложить следующие варианты:')
+        for i in links:
+            await bot.send_message(message.from_user.id, f'{i}')
+
+    print(links)
+    print(data['city'], int(data['floor']), int(data['floor_count']), int(data['rooms_count']),
+          int(data['total_meters']), data['underground'])
 
 
 loaded_model = joblib.load('modelpipelinefinal.pickle')
@@ -40,6 +63,7 @@ class FlatInfo(StatesGroup):
     ROOMS_COUNT = State()
     TOTAL_METERS = State()
     UNDERGROUND = State()
+    SCORE = State()
 
 
 
@@ -93,14 +117,34 @@ async def ask_FLOOR(message, state):
 async def ask_FLOOR(message, state):
     await state.update_data(underground=message.text)
     data = await state.get_data()
-    await state.finish()
+
     test = pd.DataFrame([[0, data['city'], int(data['floor']), int(data['floor_count']), int(data['rooms_count']), int(data['total_meters']), data['underground']]],
                         columns=["Unnamed: 0", "city", "floor", "floors_count", "rooms_count", "total_meters",
                                  "underground"])
 
     price = loaded_model.predict(test)[0]
-    await bot.send_message(message.chat.id, "Ориентировочная стоимость аренды квартиры по твоим параметрам: " + str(round(price)),reply_markup=types.ReplyKeyboardMarkup().add(types.KeyboardButton('/start')))
+    await bot.send_message(message.chat.id, "Ориентировочная стоимость аренды квартиры по твоим параметрам: " + str(round(price)))
+    if data['city'] == 'Москва':
+        await filter(Moscow,data, price, message)
+    if data['city'] == 'Санкт-Петербург':
+        await filter(SaintP,data, price, message)
+    if data['city'] == 'Казань':
+        await filter(Kazan, data, price, message)
+    if data['city'] == 'Новосибирск':
+        await filter(Novosib,data, price, message)
+    if data['city'] == 'Екатеринбург':
+        await filter(Ekat, data, price, message)
 
+    await state.set_state(FlatInfo.SCORE)
+    await bot.send_message(message.chat.id, "Помоги мне стать лучше, оцени мою работу по десятибалльной шкале")
 
+@dp.message_handler(state=FlatInfo.SCORE)
+async def ask_FLOOR(message, state):
+    await state.update_data(score=message.text)
+    df = pd.read_csv('score.csv')
+    df.loc[len(df.index)] = [message.chat.id, message.text]
+    df.to_csv('score.csv', index = False)
+    await bot.send_message(message.chat.id, "Спасибо, твой отзыв учтён!",reply_markup=types.ReplyKeyboardMarkup().add(types.KeyboardButton('/start')))
+    await state.finish()
 
 executor.start_polling(dp)
